@@ -12,6 +12,7 @@
     <Name>PythonApplication2</Name>
     <RootNamespace>PythonApplication2</RootNamespace>
     <InterpreterId>CondaEnv|CondaEnv|SR</InterpreterId>
+    <IsWindowsApplication>False</IsWindowsApplication>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>

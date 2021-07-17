@@ -12,6 +12,10 @@
     <Name>PythonApplication1</Name>
     <RootNamespace>PythonApplication1</RootNamespace>
     <InterpreterId>CondaEnv|CondaEnv|SR</InterpreterId>
+    <TestFramework>pytest</TestFramework>
+    <UnitTestPattern>test*.py</UnitTestPattern>
+    <UnitTestRootDirectory>.</UnitTestRootDirectory>
+    <IsWindowsApplication>False</IsWindowsApplication>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <DebugSymbols>true</DebugSymbols>
@@ -26,6 +30,36 @@
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="CondaEnv|CondaEnv|SR" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="input_images\" />
+    <Folder Include="models\" />
+    <Folder Include="output_images\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="input_images\01.jpg" />
+    <Content Include="input_images\02.jpg" />
+    <Content Include="input_images\03.jpg" />
+    <Content Include="input_images\04.jpg" />
+    <Content Include="input_images\05.jpg" />
+    <Content Include="input_images\06.jpg" />
+    <Content Include="input_images\07.jpg" />
+    <Content Include="models\DownloadModelsURL.txt" />
+    <Content Include="models\EDSR_x2.pb" />
+    <Content Include="models\EDSR_x3.pb" />
+    <Content Include="models\EDSR_x4.pb" />
+    <Content Include="models\ESPCN_x2.pb" />
+    <Content Include="models\ESPCN_x3.pb" />
+    <Content Include="models\ESPCN_x4.pb" />
+    <Content Include="models\FSRCNN-small_x2.pb" />
+    <Content Include="models\FSRCNN-small_x3.pb" />
+    <Content Include="models\FSRCNN-small_x4.pb" />
+    <Content Include="models\FSRCNN_x2.pb" />
+    <Content Include="models\FSRCNN_x3.pb" />
+    <Content Include="models\FSRCNN_x4.pb" />
+    <Content Include="models\LapSRN_x2.pb" />
+    <Content Include="models\LapSRN_x4.pb" />
+    <Content Include="models\LapSRN_x8.pb" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
