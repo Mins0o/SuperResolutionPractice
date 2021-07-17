@@ -98,10 +98,13 @@ sr_model.setModel("edsr",4)
 
 comparison = []
 upscaled = []
-for i in range(len(cropped)):
-    print("image {:3d}/{:3d} being processed       ".format(i,len(cropped)),end= "\r")
-    result_img = sr_model.upsample(cropped[i])
-    upscaled.append(result_img)
-    comp = np.concatenate((upscale_repeat(cropped[i],4), result_img))
-    comparison.append(comp)
-show_image_grid(comparison)
+for temp in range(2):
+    comparison = []
+    target = images[11+8*temp:19+8*temp]
+    for i in range(len(target)):
+        print("image {:3d}/{:3d} being processed       ".format(i+1,len(target)),end= "\r")
+        result_img = sr_model.upsample(target[i])
+        upscaled.append(result_img)
+        comp = np.concatenate((upscale_repeat(target[i],4), result_img),axis = 1)
+        comparison.append(comp)
+    show_image_grid(comparison)
