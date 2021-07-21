@@ -12,7 +12,7 @@ import matplotlib
 class UpscaleTester:
     def __init__(self, base_dir = "./"):
         self.base_dir = base_dir
-        self.__model__ = cv2.dnn_superres.DnnSuperResImpl_create()
+        self._model = cv2.dnn_superres.DnnSuperResImpl_create()
         """ download models from the urls below
         https://github.com/Saafke/EDSR_Tensorflow/blob/master/models/EDSR_x2.pb?raw=true
         https://github.com/Saafke/EDSR_Tensorflow/blob/master/models/EDSR_x3.pb?raw=true
@@ -73,15 +73,15 @@ class UpscaleTester:
         print("> Searching in \n{0}models/ \nfor {1}_x{2}.pb model".format(self.base_dir, model.upper(), scale))
         model_path = "{0}models/{1}_x{2}.pb".format(self.base_dir, model.upper(), scale)
         if os.path.isfile(model_path):
-            self.__model__.readModel(model_path)
-            self.__model__.setModel(model.lower(), scale)
+            self._model.readModel(model_path)
+            self._model.setModel(model.lower(), scale)
             print("> Set the model to {0}_x{1}".format(model.upper(),scale))
         else:
             print("> The model file \n{}\ndoesn't exist".format(model_path))
 
     def get_model_n_scale(self) -> (str, int):
-        model_name = self.__model__.getAlgorithm()
-        scale_value = self.__model__.getScale()
+        model_name = self._model.getAlgorithm()
+        scale_value = self._model.getScale()
         return(model_name, scale_value)
 
     def upscale_repeat(self, img, scale:int) -> np.ndarray:
@@ -92,11 +92,19 @@ class UpscaleTester:
         ch3 = img[:,:,2]
         return np.array(np.stack((np.kron(ch1,o), np.kron(ch2,o), np.kron(ch3,o)),axis = 2), dtype = original_dtype)
 
+    def scale_interpolation(self, img, scale, interpolation = cv2.INTER_CUBIC):
+        """cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4, cv2.INTER_LINEAR_EXACT, cv2.INTER_NEAREST_EXACT, cv2.INTER_MAX,  """
+        dsize = (img.shape[1] * scale, img.shape[0] * scale)
+        return(cv2.resize(img, dsize, fx = scale, fy = scale, interpolation = interpolation))
+
     def upscale_dnn(self, img:np.ndarray):
-        return self.__model__.upsample(img)
+        return self._model.upsample(img)
 
     def upscale_repeat_list(self, img_list, scale = 4) -> list:
         return [self.upscale_repeat(img,scale) for img in img_list]
+
+    def scale_interpolation_list(self, img_list, scale = 4, interpolation = cv2.INTER_CUBIC) -> list:
+        return [self.scale_interpolation(img, scale, interpolation) for img in img_list]
 
     def upscale_dnn_list(self, img_list, model:str = None, scale:int = 4, verbose:bool = False):
         swap_model = not model == None and not self.get_model_n_scale == (model, scale)
@@ -113,10 +121,10 @@ class UpscaleTester:
             results = []
             for img_num in range(len(img_list)):
                 print("image {:3d}/{:3d} being processed       ".format(img_num+1,len(img_list)),end= "\r")
-                results.append(self.__model__.upsample(img_list[img_num]))
+                results.append(self._model.upsample(img_list[img_num]))
             print()
         else:
-            results = [self.__model__.upsample(img) for img in img_list]
+            results = [self._model.upsample(img) for img in img_list]
         if swap_model:
             read_set_model = (old[0],old[1])
         print("-----------------------------------------")
@@ -179,15 +187,40 @@ if(__name__ == "__main__"):
     ut = UpscaleTester()
 
     images = load_inputs()
-    cropped = ut.crop_img_list(images, x_start = 1/2, height = 50, y_start = 3/5, width = 100)
+    cropped = ut.crop_img_list(images, x_start = 1/2, x_end = 4/7, y_start = 3/7, y_end = 4/7)
 
-    # ut.fig_image_grid(images)
-    # ut.fig_image_grid(cropped)
+    # show images
+
+    # show crops
+
+    # upsample dnn crop
+
+    # downsample - subsample, 4 slot avg, pyramid subsample
+    def downsample_subsample(self, img, scale, cell_num):
+        pass
+
+    def downsample_neighbor_avg(self, img, scale):
+        h1 = np.kron(np.eye(3),np.array([[1/2,1/2],[0, 0]]))
+        h2 = np.kron(np.eye(2),np.array([[1/2,0],[1/2,0]]))
+        np.matmul(h1,np.matmul(img,h2))[::2,::2]
+
+    def downsample_pyramid(self, img, scale):
+        pass
+
+    # upsample interpolation pyrdown
+
+    # upsample 
 
     ut.read_set_model("ESPCN",4)
-    ut.fig_comp_dnn_orig(cropped[:7], axis = 0)
-    comparison = []
-    upscaled = []
-    target = images[7:27]
-    ut.fig_comp_dnn_orig(target, model = "EDSR", scale = 4, target_ratio = 0.5, verbose = True)
+    fig1 = ut.fig_comp_dnn_orig(cropped[:7], axis = 0, target_ratio = 8/9)
+    fig1.suptitle("ESPCN_4")
+
+    resized = ut.scale_interpolation_list(cropped[:7], 4, cv2.INTER_LANCZOS4)
+    fig2 = ut.fig_comp_grid(cropped[:7], resized, axis = 0, target_ratio = 16/9)
+    fig2.suptitle("INTER_LANCZOS4")
     plt.show()
+
+    #print("Pixel Arts")
+    #target = images[7:27]
+    #ut.fig_comp_dnn_orig(target, model = "EDSR", scale = 4, target_ratio = 0.5, verbose = True)
+    #plt.show()
