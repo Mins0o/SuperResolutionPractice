@@ -106,12 +106,11 @@ class UpscaleTester:
         ch3 = img[:,:,2]
         return np.array(np.stack((np.kron(ch1,o), np.kron(ch2,o), np.kron(ch3,o)),axis = 2), dtype = original_dtype)
 
-    def scale_interpolation(self, img, scale, interpolation = cv2.INTER_CUBIC):
-        """cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4, cv2.INTER_LINEAR_EXACT, cv2.INTER_NEAREST_EXACT, cv2.INTER_MAX,  """
-        dsize = (img.shape[1] * scale, img.shape[0] * scale)
-        return(cv2.resize(img, dsize, fx = scale, fy = scale, interpolation = interpolation))
-
-    def downsample_subsample(self, img, scale, cell_x, cell_y):
+    def downsample_subsample(self, img, scale, cell_x = None, cell_y = None):
+        if cell_x == None:
+            cell_x = (scale + 1) // 2
+        if cell_y == None:
+            cell_y = (scale + 1) // 2
         assert(cell_x < scale)
         assert(cell_y < scale)
         return(img[cell_x::scale, cell_y::scale, :])
@@ -153,6 +152,11 @@ class UpscaleTester:
 
     def upscale_dnn(self, img:np.ndarray):
         return self._model.upsample(img)
+
+    def scale_interpolation(self, img, scale, interpolation = cv2.INTER_CUBIC):
+        """cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4, cv2.INTER_LINEAR_EXACT, cv2.INTER_NEAREST_EXACT, cv2.INTER_MAX,  """
+        dsize = (img.shape[1] * scale, img.shape[0] * scale)
+        return(cv2.resize(img, dsize, fx = scale, fy = scale, interpolation = interpolation))
 
     def upscale_nn_list(self, img_list, scale = 4) -> list:
         return [self.upscale_nearest_neighbor(img,scale) for img in img_list]
@@ -241,7 +245,7 @@ def load_inputs(base_path= "./", image_dir = "input_images"):
         return images
 
 if(__name__ == "__main__"):
-    figs=[]
+    maximize_figs=[]
     ut = UpscaleTester()
     images = load_inputs()
 
@@ -249,54 +253,57 @@ if(__name__ == "__main__"):
     pixel_arts = images[7:]
     cropped = ut.crop_img_list(photos, x_start = 13/32, height = 65, y_start = 29/50, width = 110)
 
+# Show original images
 if(__name__ == "__main__"):
-    # show original images
     #ut.fig_image_grid(cropped)
     #plt.show()
-    figs.append(ut.fig_image_grid(photos, num = "Original Photos"))
-    plt.suptitle("Original Photos")
-    figs.append(ut.fig_image_grid(pixel_arts, num = "Pixel Arts"))
-    plt.suptitle("Pixel Arts")
+    maximize_figs.append(ut.fig_image_grid(photos, num = "Original Photos"))
+    maximize_figs.append(ut.fig_image_grid(pixel_arts, num = "Pixel Arts"))
 
+# Show crops
+if(__name__ == "__main__"): # show crops
+    maximize_figs.append(ut.fig_image_grid(cropped, num = "Cropped Photos"))
+
+# Upsample dnn crop
+if(__name__ == "__main__" and False): 
+    print("\nUpscaling EDSR x4");upscaled_edsr = ut.upscale_dnn_list(cropped, "edsr", 4, True)
+    print("\nUpscaling ESPCN x4");upscaled_espcn = ut.upscale_dnn_list(cropped, "espcn", 4, True)
+    print("\nUpscaling FSRCNN x4");upscaled_fsrcnn = ut.upscale_dnn_list(cropped, "fsrcnn", 4, True)
+    print("\nUpscaling FSRCNN-small x4");upscaled_fsrcnn_s = ut.upscale_dnn_list(cropped, "fsrcnn-small", 4, True)
+    print("\nUpscaling LapSRN x4");upscaled_edsr = ut.upscale_dnn_list(cropped, "LapSRN", 4, True)
+
+    maximize_figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "EDSR"))
+    maximize_figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "ESPCN"))
+    maximize_figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "FSRCNN"))
+    maximize_figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "FSRCNN-small"))
+    maximize_figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "LapSRN"))
+
+# Upsample Pixle_Arts
+if(__name__ == "__main__" and False): 
+    pixel_arts_algo = "edsr"
+    pixel_arts_scale = 4
+    upscaled_pixel_arts1 = ut.upscale_dnn_list(pixel_arts[:7], pixel_arts_algo, pixel_arts_scale, True)
+    maximize_figs.append(ut.fig_comp_grid(pixel_arts[:7], upscaled_pixel_arts1, axis = 1, num = "SR Pixel Arts1"))
+    upscaled_pixel_arts2 = ut.upscale_dnn_list(pixel_arts[7:14], pixel_arts_algo, pixel_arts_scale, True)
+    maximize_figs.append(ut.fig_comp_grid(pixel_arts[7:14], upscaled_pixel_arts2, axis = 1, num = "SR Pixel Arts2"))
+    upscaled_pixel_arts3 = ut.upscale_dnn_list(pixel_arts[14:], pixel_arts_algo, pixel_arts_scale, True)
+    maximize_figs.append(ut.fig_comp_grid(pixel_arts[14:], upscaled_pixel_arts3, axis = 1, num = "SR Pixel Arts3"))
+
+# Downsample - subsample, area_avg, gaussian blur - downsample
+if(__name__ == "__main__" and True):
+    downsampled = [ut.downsample_gaussian(img, 4) for img in photos]
+    maximize_figs.append(ut.fig_image_grid(downsampled, num = "Downsampled"))
+# 
+
+# Upsample the downsampled
+if(__name__ == "__main__" and True):
+    restored = ut.upscale_dnn_list(downsampled, "edsr", verbose = True)
+    maximize_figs.append(ut.fig_comp_grid(downsampled, restored, axis = 0, num = "Restored Comparison"))
+    maximize_figs.append(ut.fig_image_grid(downsampled, num = "Restored"))
+
+# Show pyplot figures 
 if(__name__ == "__main__"):
-    # show crops
-    figs.append(ut.fig_image_grid(cropped, num = "Cropped"))
-    plt.suptitle("Cropped Photos")
-
-if(__name__ == "__main__"):
-    # upsample dnn crop
-    print("\nUpscaling EDSR x4")
-    upscaled_edsr = ut.upscale_dnn_list(cropped, "edsr", 4, True)
-    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "EDSR"))
-
-    print("\nUpscaling ESPCN x4")
-    upscaled_espcn = ut.upscale_dnn_list(cropped, "espcn", 4)
-    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "ESPCN"))
-
-    print("\nUpscaling FSRCNN x4")
-    upscaled_fsrcnn = ut.upscale_dnn_list(cropped, "fsrcnn", 4)
-    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "FSRCNN"))
-
-    print("\nUpscaling FSRCNN-small x4")
-    upscaled_fsrcnn_s = ut.upscale_dnn_list(cropped, "fsrcnn-small", 4)
-    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "FSRCNN-small"))
-
-    print("\nUpscaling LapSRN x4")
-    upscaled_edsr = ut.upscale_dnn_list(cropped, "LapSRN", 4)
-    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "LapSRN"))
-
-if(__name__ == "__main__"):
-    # downsample - subsample, area_avg, gaussian blur - downsample
-    pass
-
-if(__name__ == "__main__"):
-    # upsample interpolation pyrdown
-    pass
-
-if(__name__ == "__main__"):
-    # upsample 
-
-    for fig in figs:
+    for fig in maximize_figs:
         fig.canvas.manager.window.showMaximized()
 
     plt.show()
