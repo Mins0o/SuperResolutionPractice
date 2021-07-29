@@ -13,6 +13,11 @@ class UpscaleTester:
     def __init__(self, base_dir = "./"):
         self.base_dir = base_dir
         self._model = cv2.dnn_superres.DnnSuperResImpl_create()
+        self._rename_models()
+        """
+        edsr | espcn | fsrcnn | fsrcnn-small | lapsrn
+        """
+
         """ download models from the urls below
         https://github.com/Saafke/EDSR_Tensorflow/blob/master/models/EDSR_x2.pb?raw=true
         https://github.com/Saafke/EDSR_Tensorflow/blob/master/models/EDSR_x3.pb?raw=true
@@ -35,7 +40,14 @@ class UpscaleTester:
         https://github.com/fannymonori/TF-LapSRN/blob/master/export/LapSRN_x8.pb?raw=true
         """
    
-    def __grid_dimensions__(self, num_elem:int, target_ratio:float = (16/9.0)) -> (int, int):
+    def _rename_models(self):
+        if not os.path.exists(self.base_dir+"/models"):
+            os.mkdir(self.base_dir+"/models")
+        for file_name in os.listdir(self.base_dir+"/models"):
+            if file_name[-3:].lower() == ".pb":
+                os.rename(self.base_dir+"/models/"+file_name, self.base_dir+"/models/"+file_name[:-6].upper()+file_name[-6:])
+        
+    def _grid_dimensions(self, num_elem:int, target_ratio:float = (16/9.0)) -> (int, int):
         fittest_factor = 1
         fittest_score = 99999
         fittest_addition = 0
@@ -69,22 +81,24 @@ class UpscaleTester:
             y_crop = lambda img: start_size(img, 1, y_start, width)
         return [img[x_crop(img), y_crop(img)] for img in img_list]
  
-    def read_set_model(self, model, scale) -> None:
-        print("> Searching in \n{0}models/ \nfor {1}_x{2}.pb model".format(self.base_dir, model.upper(), scale))
+    def read_set_model(self, model, scale, verbose = False) -> None:
+        if verbose:
+            print("> Searching in \n{0}models/ \nfor {1}_x{2}.pb model".format(self.base_dir, model.upper(), scale))
         model_path = "{0}models/{1}_x{2}.pb".format(self.base_dir, model.upper(), scale)
         if os.path.isfile(model_path):
             self._model.readModel(model_path)
-            self._model.setModel(model.lower(), scale)
-            print("> Set the model to {0}_x{1}".format(model.upper(),scale))
+            self._model.setModel(model.lower().split("-")[0], scale)
+            if verbose:
+                print("> Set the model to {0}_x{1}".format(model.upper(),scale))
         else:
             print("> The model file \n{}\ndoesn't exist".format(model_path))
 
     def get_model_n_scale(self) -> (str, int):
-        model_name = self._model.getAlgorithm()
+        model_name = self._model.getAlgorithm().lower()
         scale_value = self._model.getScale()
         return(model_name, scale_value)
 
-    def upscale_repeat(self, img, scale:int) -> np.ndarray:
+    def upscale_nearest_neighbor(self, img, scale:int) -> np.ndarray:
         original_dtype = img.dtype
         o = np.ones((scale,scale))
         ch1 = img[:,:,0]
@@ -97,21 +111,61 @@ class UpscaleTester:
         dsize = (img.shape[1] * scale, img.shape[0] * scale)
         return(cv2.resize(img, dsize, fx = scale, fy = scale, interpolation = interpolation))
 
+    def downsample_subsample(self, img, scale, cell_x, cell_y):
+        assert(cell_x < scale)
+        assert(cell_y < scale)
+        return(img[cell_x::scale, cell_y::scale, :])
+
+    def downsample_neighbor_avg(self, img, scale):
+        dim_y, dim_x, _ = img.shape
+        pad_x = (-dim_x) % scale
+        pad_y = (-dim_y) % scale
+
+        # cv2.copyMakeBorder(img, top, bottom, left, right, borderType = cv2.BORDER_REFLECT_101)
+        padded = cv2.copyMakeBorder(img, 0, pad_x, 0, pad_y, cv2.BORDER_DEFAULT)
+
+        # update dimensions
+        dim_y = pad_y + dim_y
+        dim_x = pad_x + dim_x
+
+        # repetition count on x, y
+        rep_y = int(dim_y / scale)
+        rep_x = int(dim_x / scale)
+
+        # h_ingredient
+        hi1 = np.zeros((scale, scale))
+        hi2 = np.zeros((scale, scale))
+        hi1[0] = np.ones(scale)/scale
+        hi2[:,0] = np.ones(scale)/scale
+
+        h1 = np.kron(np.eye(rep_y), hi1)
+        h2 = np.kron(np.eye(rep_x), hi2) 
+        ch1 = padded[:,:,0]
+        ch2 = padded[:,:,1]
+        ch3 = padded[:,:,2]
+        process_ch = lambda ch:np.matmul(h1,np.matmul(ch,h2))[::scale,::scale]
+        avg_subsampled = np.stack((process_ch(ch1), process_ch(ch2), process_ch(ch3)), axis = 2)
+        return avg_subsampled
+
+    def downsample_gaussian(self, img, scale):
+        kernel_dim = scale + (1 - scale%2)
+        return(cv2.GaussianBlur(img, (kernel_dim, kernel_dim), -1)[(scale+1)//2::scale, (scale+1)//2::scale, :])
+
     def upscale_dnn(self, img:np.ndarray):
         return self._model.upsample(img)
 
-    def upscale_repeat_list(self, img_list, scale = 4) -> list:
-        return [self.upscale_repeat(img,scale) for img in img_list]
+    def upscale_nn_list(self, img_list, scale = 4) -> list:
+        return [self.upscale_nearest_neighbor(img,scale) for img in img_list]
 
     def scale_interpolation_list(self, img_list, scale = 4, interpolation = cv2.INTER_CUBIC) -> list:
         return [self.scale_interpolation(img, scale, interpolation) for img in img_list]
 
     def upscale_dnn_list(self, img_list, model:str = None, scale:int = 4, verbose:bool = False):
-        swap_model = not model == None and not self.get_model_n_scale == (model, scale)
+        swap_model = not model.lower() == None and not self.get_model_n_scale() == (model, scale)
         if swap_model:
             old = self.get_model_n_scale()
             try:
-                self.read_set_model(model, scale)
+                self.read_set_model(model, scale, verbose = verbose)
             except e:
                 print('The model "{0}_{1}.pb" couldn`t be loaded'.format(model.upper(),scale))
                 print(e)
@@ -125,17 +179,21 @@ class UpscaleTester:
             print()
         else:
             results = [self._model.upsample(img) for img in img_list]
-        if swap_model:
-            read_set_model = (old[0],old[1])
+        if swap_model  and old[0]:
+            self.read_set_model(old[0],old[1])
         print("-----------------------------------------")
         return results
     
-    def fig_image_grid(self, img_list, target_ratio = 16/9.0) -> matplotlib.figure.Figure:
+    def fig_image_grid(self, img_list, target_ratio = 16/9.0, num = None) -> matplotlib.figure.Figure:
         num_images = len(img_list)
-        grid_height, grid_width = self.__grid_dimensions__(num_images, target_ratio)
+        grid_height, grid_width = self._grid_dimensions(num_images, target_ratio)
 
         # create new window and display images in subplots
-        fig = plt.figure()
+        if num == None:
+            fig = plt.figure()
+        else:
+            fig = plt.figure(num = num)
+            fig.suptitle(num)
         for img in range(num_images):
             plt.subplot(int(grid_height), int(grid_width), img+1)
             plt.axis("off")
@@ -143,7 +201,7 @@ class UpscaleTester:
             plt.imshow(img_list[img][:,:,::-1])
         return(fig)
           
-    def fig_comp_grid(self, img_list_1, img_list_2, axis = 0, target_ratio = 16/9.0) -> matplotlib.figure.Figure:
+    def fig_comp_grid(self, img_list_1, img_list_2, axis = 0, target_ratio = 16/9.0, num = None) -> matplotlib.figure.Figure:
         """
         The two lists' elements should match each other, and the scale difference should be consistent.
         axis = 0 : vertical concatenation
@@ -166,13 +224,13 @@ class UpscaleTester:
             raise Exception("The scale is not integer. \nimg_list_1: {0} \nimg_list_2: {1}".format(len(img_list_1),len(img_list_2)))
 
         scale = int(dims[big]/dims[small])
-        lists[small] = self.upscale_repeat_list(lists[small], scale)
+        lists[small] = self.upscale_nn_list(lists[small], scale)
         comp = [np.concatenate((lists[0][i], lists[1][i]),axis = axis) for i in range(num_elem)]
-        return self.fig_image_grid(comp, target_ratio)
+        return self.fig_image_grid(comp, target_ratio, num)
 
-    def fig_comp_dnn_orig(self, img_list, axis = 1, target_ratio = 16/9.0, model:str = None, scale:int = 4, verbose = False):
+    def fig_comp_dnn_orig(self, img_list, axis = 1, target_ratio = 16/9.0, model:str = None, scale:int = 4, verbose = False, num = None):
         upscaled = self.upscale_dnn_list(img_list, model, scale, verbose)
-        return (self.fig_comp_grid(img_list, upscaled, axis, target_ratio))
+        return self.fig_comp_grid(img_list, upscaled, axis, target_ratio, num)
 
 def load_inputs(base_path= "./", image_dir = "input_images"):
         image_extensions = [".jpg",".png"]
@@ -183,42 +241,75 @@ def load_inputs(base_path= "./", image_dir = "input_images"):
         return images
 
 if(__name__ == "__main__"):
-
+    figs=[]
     ut = UpscaleTester()
-
     images = load_inputs()
-    cropped = ut.crop_img_list(images, x_start = 1/2, x_end = 4/7, y_start = 3/7, y_end = 4/7)
 
-    # show images
+    photos = images[:7]
+    pixel_arts = images[7:]
+    cropped = ut.crop_img_list(photos, x_start = 13/32, height = 65, y_start = 29/50, width = 110)
 
+if(__name__ == "__main__"):
+    # show original images
+    #ut.fig_image_grid(cropped)
+    #plt.show()
+    figs.append(ut.fig_image_grid(photos, num = "Original Photos"))
+    plt.suptitle("Original Photos")
+    figs.append(ut.fig_image_grid(pixel_arts, num = "Pixel Arts"))
+    plt.suptitle("Pixel Arts")
+
+if(__name__ == "__main__"):
     # show crops
+    figs.append(ut.fig_image_grid(cropped, num = "Cropped"))
+    plt.suptitle("Cropped Photos")
 
+if(__name__ == "__main__"):
     # upsample dnn crop
+    print("\nUpscaling EDSR x4")
+    upscaled_edsr = ut.upscale_dnn_list(cropped, "edsr", 4, True)
+    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "EDSR"))
 
-    # downsample - subsample, 4 slot avg, pyramid subsample
-    def downsample_subsample(self, img, scale, cell_num):
-        pass
+    print("\nUpscaling ESPCN x4")
+    upscaled_espcn = ut.upscale_dnn_list(cropped, "espcn", 4)
+    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "ESPCN"))
 
-    def downsample_neighbor_avg(self, img, scale):
-        h1 = np.kron(np.eye(3),np.array([[1/2,1/2],[0, 0]]))
-        h2 = np.kron(np.eye(2),np.array([[1/2,0],[1/2,0]]))
-        np.matmul(h1,np.matmul(img,h2))[::2,::2]
+    print("\nUpscaling FSRCNN x4")
+    upscaled_fsrcnn = ut.upscale_dnn_list(cropped, "fsrcnn", 4)
+    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "FSRCNN"))
 
-    def downsample_pyramid(self, img, scale):
-        pass
+    print("\nUpscaling FSRCNN-small x4")
+    upscaled_fsrcnn_s = ut.upscale_dnn_list(cropped, "fsrcnn-small", 4)
+    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "FSRCNN-small"))
 
+    print("\nUpscaling LapSRN x4")
+    upscaled_edsr = ut.upscale_dnn_list(cropped, "LapSRN", 4)
+    figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "LapSRN"))
+
+if(__name__ == "__main__"):
+    # downsample - subsample, area_avg, gaussian blur - downsample
+    pass
+
+if(__name__ == "__main__"):
     # upsample interpolation pyrdown
+    pass
 
+if(__name__ == "__main__"):
     # upsample 
 
-    ut.read_set_model("ESPCN",4)
-    fig1 = ut.fig_comp_dnn_orig(cropped[:7], axis = 0, target_ratio = 8/9)
-    fig1.suptitle("ESPCN_4")
+    for fig in figs:
+        fig.canvas.manager.window.showMaximized()
 
-    resized = ut.scale_interpolation_list(cropped[:7], 4, cv2.INTER_LANCZOS4)
-    fig2 = ut.fig_comp_grid(cropped[:7], resized, axis = 0, target_ratio = 16/9)
-    fig2.suptitle("INTER_LANCZOS4")
     plt.show()
+
+
+    #ut.read_set_model("ESPCN",4)
+    #fig1 = ut.fig_comp_dnn_orig(cropped[:7], axis = 0, target_ratio = 8/9)
+    #fig1.suptitle("ESPCN_4")
+
+    #resized = ut.scale_interpolation_list(cropped[:7], 4, cv2.INTER_LANCZOS4)
+    #fig2 = ut.fig_comp_grid(cropped[:7], resized, axis = 0, target_ratio = 16/9)
+    #fig2.suptitle("INTER_LANCZOS4")
+    #plt.show()
 
     #print("Pixel Arts")
     #target = images[7:27]
