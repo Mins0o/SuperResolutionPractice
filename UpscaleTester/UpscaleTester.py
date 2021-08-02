@@ -1,13 +1,16 @@
-print("pip install numpy opencv matplotlib")
+print("make sure to install dependencies\npip install numpy opencv matplotlib")
 print("> Importing openCV                 ",end = "\r")
 import matplotlib.pyplot as plt
 print("> Importing numpy                  ",end = "\r")
 import numpy as np
+import numpy.linalg as LA
 print("> Importing openCV                 ",end = "\r")
 import cv2
 import os
 print("                                   ")
 import matplotlib
+from math import log10, sqrt
+from skimage.metrics import structural_similarity as ssim
 
 class UpscaleTester:
     def __init__(self, base_dir = "./"):
@@ -98,14 +101,6 @@ class UpscaleTester:
         scale_value = self._model.getScale()
         return(model_name, scale_value)
 
-    def upscale_nearest_neighbor(self, img, scale:int) -> np.ndarray:
-        original_dtype = img.dtype
-        o = np.ones((scale,scale))
-        ch1 = img[:,:,0]
-        ch2 = img[:,:,1]
-        ch3 = img[:,:,2]
-        return np.array(np.stack((np.kron(ch1,o), np.kron(ch2,o), np.kron(ch3,o)),axis = 2), dtype = original_dtype)
-
     def downsample_subsample(self, img, scale, cell_x = None, cell_y = None):
         if cell_x == None:
             cell_x = (scale + 1) // 2
@@ -116,20 +111,20 @@ class UpscaleTester:
         return(img[cell_x::scale, cell_y::scale, :])
 
     def downsample_neighbor_avg(self, img, scale):
-        dim_y, dim_x, _ = img.shape
+        dim_x, dim_y, _ = img.shape
         pad_x = (-dim_x) % scale
         pad_y = (-dim_y) % scale
 
         # cv2.copyMakeBorder(img, top, bottom, left, right, borderType = cv2.BORDER_REFLECT_101)
-        padded = cv2.copyMakeBorder(img, 0, pad_x, 0, pad_y, cv2.BORDER_DEFAULT)
+        padded = cv2.copyMakeBorder(img, 0, pad_x, 0, pad_y, cv2.BORDER_REFLECT)
 
         # update dimensions
-        dim_y = pad_y + dim_y
         dim_x = pad_x + dim_x
+        dim_y = pad_y + dim_y
 
         # repetition count on x, y
-        rep_y = int(dim_y / scale)
         rep_x = int(dim_x / scale)
+        rep_y = int(dim_y / scale)
 
         # h_ingredient
         hi1 = np.zeros((scale, scale))
@@ -137,13 +132,13 @@ class UpscaleTester:
         hi1[0] = np.ones(scale)/scale
         hi2[:,0] = np.ones(scale)/scale
 
-        h1 = np.kron(np.eye(rep_y), hi1)
-        h2 = np.kron(np.eye(rep_x), hi2) 
+        h1 = np.kron(np.eye(rep_x), hi1)
+        h2 = np.kron(np.eye(rep_y), hi2) 
         ch1 = padded[:,:,0]
         ch2 = padded[:,:,1]
         ch3 = padded[:,:,2]
         process_ch = lambda ch:np.matmul(h1,np.matmul(ch,h2))[::scale,::scale]
-        avg_subsampled = np.stack((process_ch(ch1), process_ch(ch2), process_ch(ch3)), axis = 2)
+        avg_subsampled = np.stack((process_ch(ch1), process_ch(ch2), process_ch(ch3)), axis = 2).astype(int)
         return avg_subsampled
 
     def downsample_gaussian(self, img, scale):
@@ -155,11 +150,8 @@ class UpscaleTester:
 
     def scale_interpolation(self, img, scale, interpolation = cv2.INTER_CUBIC):
         """cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4, cv2.INTER_LINEAR_EXACT, cv2.INTER_NEAREST_EXACT, cv2.INTER_MAX,  """
-        dsize = (img.shape[1] * scale, img.shape[0] * scale)
+        dsize = (int(img.shape[1] * scale), int(img.shape[0] * scale))
         return(cv2.resize(img, dsize, fx = scale, fy = scale, interpolation = interpolation))
-
-    def upscale_nn_list(self, img_list, scale = 4) -> list:
-        return [self.upscale_nearest_neighbor(img,scale) for img in img_list]
 
     def scale_interpolation_list(self, img_list, scale = 4, interpolation = cv2.INTER_CUBIC) -> list:
         return [self.scale_interpolation(img, scale, interpolation) for img in img_list]
@@ -215,26 +207,69 @@ class UpscaleTester:
         num_elem = len(img_list_1)
         if not len(img_list_2) == num_elem:
             raise Exception("Number of images doesn't match for the two lists\nimg_list_1: {0}  img_list_2: {1}".format(num_elem, len(img_list_2)))
-        lists = [img_list_1, img_list_2]
-        dims = (len(img_list_1[0]), len(img_list_2[0]))
-
-        small = 0
-        big = 1
-        if dims[0] > dims[1]:
-            small = 1
-            big = 0
-
-        if dims[big]%dims[small]:
-            raise Exception("The scale is not integer. \nimg_list_1: {0} \nimg_list_2: {1}".format(len(img_list_1),len(img_list_2)))
-
-        scale = int(dims[big]/dims[small])
-        lists[small] = self.upscale_nn_list(lists[small], scale)
-        comp = [np.concatenate((lists[0][i], lists[1][i]),axis = axis) for i in range(num_elem)]
+        lists = [img_list_1.copy(), img_list_2.copy()]
+        dims = [ [img.shape[1::-1] for img in lists[0]], [img.shape[1::-1] for img in lists[1]] ]
+        
+        for i in range(num_elem):
+            bigger = 0 if dims[0][i][0]>dims[1][i][0] else 1
+            smaller = 1 - bigger
+            lists[smaller][i] = cv2.resize(lists[smaller][i], dims[bigger][i], interpolation = cv2.INTER_NEAREST)
+        comp = [np.concatenate((lists[0][i], lists[1][i]), axis = axis) for i in range(num_elem)]
         return self.fig_image_grid(comp, target_ratio, num)
 
     def fig_comp_dnn_orig(self, img_list, axis = 1, target_ratio = 16/9.0, model:str = None, scale:int = 4, verbose = False, num = None):
         upscaled = self.upscale_dnn_list(img_list, model, scale, verbose)
         return self.fig_comp_grid(img_list, upscaled, axis, target_ratio, num)
+
+    def show_full_figures(self, img_list):
+        for imgs in img_list:
+            plt.figure()
+            plt.imshow(imgs[:,:,::-1])
+
+    def calculate_mse(self, img1, img2, crop_or_resize = False, best = True):
+        imgs = [img1, img2]
+        dims = (img1.shape[:2], img2.shape[:2])
+        bigger = 0 if dims[0][0]>dims[1][0] else 1
+        if(abs(dims[0][0]/dims[1][0]-1) > 0.05 or abs(dims[0][1]/dims[1][1]-1) > 0.05):
+            print("The two images are too different in size:\n{0},{1}".format(dims[0],dims[1]))
+        smaller = 1 - bigger
+
+        small = imgs[smaller] 
+        if best:
+            big = imgs[bigger][:dims[smaller][0],:dims[smaller][1],:]
+            assert(big.shape == small.shape)
+            mse_1 = np.mean((small-big)**2)
+
+            big = cv2.resize(imgs[bigger],dims[smaller][1::-1])
+            assert(big.shape == small.shape)
+            mse_2 = np.mean((small-big)**2)
+            mse_ = mse_1 if mse_1 < mse_2 else mse_2
+        else:
+            if crop_or_resize:
+                big = imgs[bigger][:dims[smaller][0],:dims[smaller][1],:]
+            else:
+                big = cv2.resize(imgs[bigger],dims[smaller][1::-1], interpolation = cv2.INTER_NEAREST)
+            assert(big.shape == small.shape)
+            mse_ = np.mean((big-small)**2)
+        return(mse_)
+
+    def calculate_mse_list(self, img_list_1, img_list_2, crop_or_resize = False, best = True):
+        mse_list = []
+        num_elems = len(img_list_1)
+        assert(num_elems==len(img_list_2))
+        for ii in range(num_elems):
+            mse_list.append(self.calculate_mse(img_list_1[ii], img_list_2[ii], crop_or_resize, best))
+        return(mse_list)
+
+    def calculate_PSNR(self, img1, img2, max_pixel = 255):
+        return 20 * log10(max_pixel / self.calculate_mse(img1,img2))
+
+    def calculate_PSNR_list(self, img_list_1, img_list_2):
+        psnr_list = []
+        num_elems = len(img_list_1)
+        for ii in range(num_elems):
+            psnr_list.append(self.calculate_PSNR(img_list_1[ii], img_list_2[ii]))
+        return(psnr_list)
 
 def load_inputs(base_path= "./", image_dir = "input_images"):
         image_extensions = [".jpg",".png"]
@@ -254,14 +289,12 @@ if(__name__ == "__main__"):
     cropped = ut.crop_img_list(photos, x_start = 13/32, height = 65, y_start = 29/50, width = 110)
 
 # Show original images
-if(__name__ == "__main__"):
-    #ut.fig_image_grid(cropped)
-    #plt.show()
+if(__name__ == "__main__" and False):
     maximize_figs.append(ut.fig_image_grid(photos, num = "Original Photos"))
     maximize_figs.append(ut.fig_image_grid(pixel_arts, num = "Pixel Arts"))
 
 # Show crops
-if(__name__ == "__main__"): # show crops
+if(__name__ == "__main__" and True): # show crops
     maximize_figs.append(ut.fig_image_grid(cropped, num = "Cropped Photos"))
 
 # Upsample dnn crop
@@ -291,15 +324,85 @@ if(__name__ == "__main__" and False):
 
 # Downsample - subsample, area_avg, gaussian blur - downsample
 if(__name__ == "__main__" and True):
-    downsampled = [ut.downsample_gaussian(img, 4) for img in photos]
-    maximize_figs.append(ut.fig_image_grid(downsampled, num = "Downsampled"))
-# 
+    ds_scale = 4
+    #downsampled = [ut.downsample_gaussian(img, ds_scale) for img in photos]
+    downsampled = ut.scale_interpolation_list(photos, scale = 0.25, interpolation = cv2.INTER_AREA)
+    #downsampled_crop = [ut.downsample_gaussian(img, ds_scale) for img in cropped]
+    downsampled_crop = ut.scale_interpolation_list(cropped, scale = 0.25, interpolation = cv2.INTER_AREA)
+    #maximize_figs.append(ut.fig_image_grid(downsampled, num = "Downsampled"))
 
-# Upsample the downsampled
+    maximize_figs.append(ut.fig_image_grid(downsampled_crop, num = "Cropped Downsampled AREA"))
+    #downsampled_crop = ut.scale_interpolation_list(cropped, scale = 1/ds_scale, interpolation = cv2.INTER_CUBIC)
+    #maximize_figs.append(ut.fig_image_grid(downsampled_crop, num = "Cropped Downsampled CUBIC"))
+    #downsampled_crop = ut.scale_interpolation_list(cropped, scale = 1/ds_scale, interpolation = cv2.INTER_LINEAR)
+    #maximize_figs.append(ut.fig_image_grid(downsampled_crop, num = "Cropped Downsampled LINEAR"))
+    #downsampled_crop = ut.scale_interpolation_list(cropped, scale = 1/ds_scale, interpolation = cv2.INTER_NEAREST)
+    #maximize_figs.append(ut.fig_image_grid(downsampled_crop, num = "Cropped Downsampled NEAREST"))
+    #downsampled_crop = [ut.downsample_gaussian(img, ds_scale) for img in cropped]
+    #maximize_figs.append(ut.fig_image_grid(downsampled_crop, num = "Cropped Downsampled gaussian"))
+    #downsampled_crop = [ut.downsample_neighbor_avg(img,ds_scale) for img in cropped]
+    #maximize_figs.append(ut.fig_image_grid(downsampled_crop, num = "neighbor average gaussian"))
+    pass
+
+# Upsample the full downsampled
 if(__name__ == "__main__" and True):
-    restored = ut.upscale_dnn_list(downsampled, "edsr", verbose = True)
-    maximize_figs.append(ut.fig_comp_grid(downsampled, restored, axis = 0, num = "Restored Comparison"))
-    maximize_figs.append(ut.fig_image_grid(downsampled, num = "Restored"))
+    restored = ut.upscale_dnn_list(downsampled, "edsr", scale = 4 ,verbose = True)
+    
+    maximize_figs.append(ut.fig_image_grid(restored, num = "Restored"))
+    #maximize_figs.append(ut.fig_comp_grid(downsampled, restored, axis = 0, num = "Restored Comparison"))
+    
+    cropped_restored = ut.crop_img_list(restored, x_start = 13/32, height = 65, y_start = 29/50, width = 110)
+
+    #maximize_figs.append(ut.fig_image_grid(cropped_restored, num = "Cropped Restored"))
+    #maximize_figs.append(ut.fig_comp_grid(cropped, cropped_restored, axis = 0, num = "Cropped Restored Comparison"))
+
+    print("Restored Full")
+    print(ut.calculate_mse_list(restored, photos))
+    print(ut.calculate_PSNR_list(restored, photos))
+    print("Cropped Restored")
+    print(ut.calculate_mse_list(cropped_restored, cropped))
+    print(ut.calculate_PSNR_list(cropped_restored, cropped))
+    
+    ut.show_full_figures(restored)
+
+# Upsample the cropped downsampled
+if(__name__ == "__main__" and False):
+    restored_crop = ut.upscale_dnn_list(downsampled_crop, "edsr", verbose = True)
+    
+    maximize_figs.append(ut.fig_image_grid(restored_crop, num = "Restored crops"))
+    #maximize_figs.append(ut.fig_comp_grid(cropped, restored_crop, axis = 0, num = "Restored crops Comparison"))
+
+    #print(ut.calculate_mse(restored_crop[0], cropped[0]))
+    print("Restored Crop")
+    print(ut.calculate_mse_list(restored_crop, cropped))
+    print(ut.calculate_PSNR_list(restored_crop, cropped))
+
+# Upsample with resizing
+if(__name__ == "__main__" and True):
+    resized_cubic = ut.scale_interpolation_list(downsampled, interpolation = cv2.INTER_CUBIC)
+    resized_lanczos = ut.scale_interpolation_list(downsampled, interpolation = cv2.INTER_LANCZOS4)
+
+    cropped_cubic = ut.crop_img_list(resized_cubic, x_start = 13/32, height = 65, y_start = 29/50, width = 110)
+    cropped_lanczos = ut.crop_img_list(resized_lanczos, x_start = 13/32, height = 65, y_start = 29/50, width = 110)
+
+    maximize_figs.append(ut.fig_image_grid(resized_cubic, num = "Resized cubic"))
+    #maximize_figs.append(ut.fig_image_grid(cropped_cubic, num = "Cropped - resized cubic"))
+    #maximize_figs.append(ut.fig_comp_grid(cropped, cropped_cubic, axis = 0, num = "Cropped cubic Comparison"))
+    
+    maximize_figs.append(ut.fig_image_grid(resized_lanczos, num = "Resized lanczos"))
+    #maximize_figs.append(ut.fig_image_grid(cropped_lanczos, num = "Cropped - resized lanczos"))
+    #maximize_figs.append(ut.fig_comp_grid(cropped, cropped_lanczos, axis = 0, num = "Cropped lanczos Comparison"))
+    
+    ut.show_full_figures(resized_cubic)
+    ut.show_full_figures(resized_lanczos)
+
+    print("Cubic resize Full")
+    print(ut.calculate_mse_list(resized_cubic, photos))
+    print(ut.calculate_PSNR_list(resized_cubic, photos))
+    print("Lanczos resize Full")
+    print(ut.calculate_mse_list(resized_lanczos, photos))
+    print(ut.calculate_PSNR_list(resized_lanczos, photos))
+
 
 # Show pyplot figures 
 if(__name__ == "__main__"):
@@ -309,16 +412,16 @@ if(__name__ == "__main__"):
     plt.show()
 
 
-    #ut.read_set_model("ESPCN",4)
-    #fig1 = ut.fig_comp_dnn_orig(cropped[:7], axis = 0, target_ratio = 8/9)
-    #fig1.suptitle("ESPCN_4")
+#ut.read_set_model("ESPCN",4)
+#fig1 = ut.fig_comp_dnn_orig(cropped[:7], axis = 0, target_ratio = 8/9)
+#fig1.suptitle("ESPCN_4")
 
-    #resized = ut.scale_interpolation_list(cropped[:7], 4, cv2.INTER_LANCZOS4)
-    #fig2 = ut.fig_comp_grid(cropped[:7], resized, axis = 0, target_ratio = 16/9)
-    #fig2.suptitle("INTER_LANCZOS4")
-    #plt.show()
+#resized = ut.scale_interpolation_list(cropped[:7], 4, cv2.INTER_LANCZOS4)
+#fig2 = ut.fig_comp_grid(cropped[:7], resized, axis = 0, target_ratio = 16/9)
+#fig2.suptitle("INTER_LANCZOS4")
+#plt.show()
 
-    #print("Pixel Arts")
-    #target = images[7:27]
-    #ut.fig_comp_dnn_orig(target, model = "EDSR", scale = 4, target_ratio = 0.5, verbose = True)
-    #plt.show()
+#print("Pixel Arts")
+#target = images[7:27]
+#ut.fig_comp_dnn_orig(target, model = "EDSR", scale = 4, target_ratio = 0.5, verbose = True)
+#plt.show()
