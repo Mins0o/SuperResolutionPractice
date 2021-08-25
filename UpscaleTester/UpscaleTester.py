@@ -10,12 +10,20 @@ import os
 print("                                   ")
 import matplotlib
 from math import log10, sqrt
+
 from skimage.metrics import structural_similarity as ssim
+from skimage import color, data, restoration
+
 from enum import Enum
 
 class UpscaleTester:
     def __init__(self, base_dir = "./"):
         self.base_dir = base_dir
+        self.output_dir = base_dir + "output_images"
+        if not os.path.isdir(self.output_dir+"/Cropped"):
+            if not os.path.isdir(self.output_dir):
+                os.mkdir(self.output_dir)
+            os.mkdir(self.output_dir+"/Cropped")
         self._model = cv2.dnn_superres.DnnSuperResImpl_create()
         self._rename_models_files()
         """
@@ -146,7 +154,7 @@ class UpscaleTester:
         kernel_dim = scale + (1 - scale%2)
         return(cv2.GaussianBlur(img, (kernel_dim, kernel_dim), -1)[(scale)//2::scale, (scale)//2::scale, :])
 
-    def upscale_dnn(self, img:np.ndarray):
+    def upscale_dnn(self, img):
         return self._model.upsample(img)
 
     def scale_interpolation(self, img, scale, interpolation = cv2.INTER_CUBIC):
@@ -280,6 +288,25 @@ class UpscaleTester:
         num_elems = len(img_list_1)
         return [ssim(img_list_1[ii], img_list_2[ii], multichannel = True) for ii in range(num_elems)]
 
+    def wiener_deconv(self, img):
+        ch1 = img[:, :, 0]
+        ch2 = img[:, :, 1]
+        ch3 = img[:, :, 2]
+        channels = [restoration.unsupervised_wiener(mono) for mono in (ch1, ch2, ch3)]
+        image_ = np.stack(channels, axis = 2)
+        plt.imshow(image_)
+        plt.show()
+        return image_
+
+    def lucy_deconv(self, img):
+        pass
+
+    def save_images(self, img_list, dir_name, prefix = None):
+        if prefix == None:
+            prefix = dir_name
+        for img_num in range(len(img_list)):
+            cv2.imwrite(ut.output_dir+"/"+dir_name+"/"+prefix+"_{:03d}.jpg".format(img_num+1), img_list[img_num])
+
 class ds_opt(Enum):
     AREA = 1
     CUBIC = 2
@@ -293,29 +320,41 @@ def load_inputs(base_path= "./", image_dir = "input_images"):
         image_dir = base_path + image_dir
         all_names = os.listdir(image_dir)
         image_names = [file_name for file_name in all_names if file_name[-4:] in image_extensions]
-        images = [cv2.imread(image_dir +"/"+ img_name) for img_name in image_names]
-        dims = [img.shape[1::-1] for img in images]
-        tailor_dim24 = lambda dim_tuple: (int(dim_tuple[0] + (-dim_tuple[0] % 24)), int(dim_tuple[1] + (-dim_tuple[1] % 24)))
-        images = [cv2.resize(images[ii],tailor_dim24(dims[ii])) for ii in range(len(images))]
+        images = [match_dim24(cv2.imread(image_dir +"/"+ img_name)) for img_name in image_names]
         return images
 
+def match_dim24(img):
+    dim = img.shape[1::-1]
+
+    pad_horizontal = (dim[0]%24)/dim[0] > 0.08
+    pad_vertical = (dim[1]%24)/dim[1] > 0.08
+
+    horizontal_padding = (-dim[0])%24 if pad_horizontal else 0
+    vertical_padding = (-dim[1])%24 if pad_vertical else 0
+
+    img = cv2.copyMakeBorder(img, vertical_padding//2, (vertical_padding+1)//2, horizontal_padding//2, (horizontal_padding+1)//2, borderType = cv2.BORDER_CONSTANT, value = (255, 255, 255))
+
+    padded_dim24 = [dim[0] + horizontal_padding, dim[1] + vertical_padding]
+
+    return img[:padded_dim24[1] - padded_dim24[1]%24, :padded_dim24[0] - padded_dim24[0]%24,::]
+
 grid_original_images = False
-grid_crop_images = False
+grid_crop_images = True
 photos_all_dnns = False
-pixel_arts_dnn = False
+pixel_arts_dnn = True
 downsample_photos = True
 downsampling_method = ds_opt.AREA
 
-full_dnn = True
-full_dnn = "edsr"
-grid_full_dnn_cropped = True
-comp_full_dnn_cropped = True
+full_dnn = False
+full_dnn_method = "fsrcnn"
+grid_full_dnn_cropped = False
+comp_full_dnn_cropped = False
 full_dnn_extra = False
 
-dnn_cropped = True
-dnn_cropped_method = "edsr" 
+dnn_cropped = False
+dnn_cropped_method = "espcn" 
 grid_cropped_dnn = True
-comp_cropped_dnn = False
+comp_cropped_dnn = True
 
 resize_upsample = False
 grid_resize_crop = False
@@ -326,18 +365,26 @@ singles_lanczos_sr = False
 
 x_start = 13/32; height = 68; y_start = 29/50; width = 112
 
+photos_index_end = 114
+
 ds_scale = 4
 pixel_arts_algo = "edsr"
 pixel_arts_scale = 4
 
+output_scale_string = "x{}".format(ds_scale)
+
 if(__name__ == "__main__"):
     maximize_figs=[]
     ut = UpscaleTester()
+    if not os.path.isdir(ut.output_dir+"/"+output_scale_string):
+        os.mkdir(ut.output_dir+"/"+output_scale_string)
     images = load_inputs()
+    ut.save_images(images, output_scale_string+"/Original", "Original")
 
-    photos = images[:7]
-    pixel_arts = images[7:]
+    photos = images[:photos_index_end]
+    pixel_arts = images[photos_index_end:]
     cropped = ut.crop_img_list(photos, x_start = x_start, height = height, y_start = y_start, width = width)
+    ut.save_images(cropped, "Cropped/Original", "Original_Crop")
 
     # Show original images
     if(grid_original_images):
@@ -350,11 +397,11 @@ if(__name__ == "__main__"):
 
     # Upsample dnn crop
     if(photos_all_dnns): 
-        print("\nUpscaling EDSR x4");upscaled_edsr = ut.upscale_dnn_list(cropped, "edsr", 4, True)
-        print("\nUpscaling ESPCN x4");upscaled_espcn = ut.upscale_dnn_list(cropped, "espcn", 4, True)
-        print("\nUpscaling FSRCNN x4");upscaled_fsrcnn = ut.upscale_dnn_list(cropped, "fsrcnn", 4, True)
-        print("\nUpscaling FSRCNN-small x4");upscaled_fsrcnn_s = ut.upscale_dnn_list(cropped, "fsrcnn-small", 4, True)
-        print("\nUpscaling LapSRN x4");upscaled_edsr = ut.upscale_dnn_list(cropped, "LapSRN", 4, True)
+        print("\nUpscaling EDSR x4");upscaled_edsr = ut.upscale_dnn_list(cropped, "edsr", ds_scale, True)
+        print("\nUpscaling ESPCN x4");upscaled_espcn = ut.upscale_dnn_list(cropped, "espcn", ds_scale, True)
+        print("\nUpscaling FSRCNN x4");upscaled_fsrcnn = ut.upscale_dnn_list(cropped, "fsrcnn", ds_scale, True)
+        print("\nUpscaling FSRCNN-small x4");upscaled_fsrcnn_s = ut.upscale_dnn_list(cropped, "fsrcnn-small", ds_scale, True)
+        print("\nUpscaling LapSRN x4");upscaled_edsr = ut.upscale_dnn_list(cropped, "LapSRN", ds_scale, True)
 
         maximize_figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "EDSR"))
         maximize_figs.append(ut.fig_comp_grid(cropped, upscaled_edsr, num = "ESPCN"))
@@ -368,12 +415,16 @@ if(__name__ == "__main__"):
         maximize_figs.append(ut.fig_comp_grid(pixel_arts[:7], upscaled_pixel_arts1, axis = 1, num = "SR Pixel Arts1"))
         upscaled_pixel_arts2 = ut.upscale_dnn_list(pixel_arts[7:14], pixel_arts_algo, pixel_arts_scale, True)
         maximize_figs.append(ut.fig_comp_grid(pixel_arts[7:14], upscaled_pixel_arts2, axis = 1, num = "SR Pixel Arts2"))
-        upscaled_pixel_arts3 = ut.upscale_dnn_list(pixel_arts[14:], pixel_arts_algo, pixel_arts_scale, True)
-        maximize_figs.append(ut.fig_comp_grid(pixel_arts[14:], upscaled_pixel_arts3, axis = 1, num = "SR Pixel Arts3"))
+        upscaled_pixel_arts3 = ut.upscale_dnn_list(pixel_arts[14:20], pixel_arts_algo, pixel_arts_scale, True)
+        maximize_figs.append(ut.fig_comp_grid(pixel_arts[14:20], upscaled_pixel_arts3, axis = 1, num = "SR Pixel Arts3"))
+        if not os.path.isdir(ut.output_dir+"/Pixel Arts"):
+            os.mkdir(ut.output_dir+"/Pixel Arts")
+        ut.save_images(upscaled_pixel_arts1 + upscaled_pixel_arts2 + upscaled_pixel_arts3, "Pixel Arts/x{}".format(pixel_arts_scale), "Pixel Arts HR({} x{})".format(pixel_arts_algo, pixel_arts_scale))
 
     # Downsample - Area, Cubic, Linear, Nearest, Gaussian, Grid_Avg
     if(downsample_photos):
         downsampled = ut.scale_interpolation_list(photos, scale = 1/ds_scale, interpolation = cv2.INTER_AREA)
+        ut.save_images(downsampled, output_scale_string+"/LR", "LR(x{:d})".format(ds_scale))
     
         if downsampling_method == ds_opt.AREA:
             downsampled_crop = ut.scale_interpolation_list(cropped, scale = 1/ds_scale, interpolation = cv2.INTER_AREA)
@@ -393,21 +444,26 @@ if(__name__ == "__main__"):
         if downsampling_method == ds_opt.GRID_AVG:
             downsampled_crop = [ut.downsample_neighbor_avg(img,ds_scale) for img in cropped]
             maximize_figs.append(ut.fig_image_grid(downsampled_crop, num = "neighbor average"))
-        pass
+        ut.save_images(downsampled_crop, output_scale_string+"/Cropped/"+output_scale_string+"/R {}".format(downsampling_method), "LR_Crop({0} {1})".format(downsampling_method, ds_scale))
 
     # Upsample the full downsampled
     if(full_dnn):
-        restored = ut.upscale_dnn_list(downsampled, full_dnn, scale = 4 ,verbose = True)
+        restored = ut.upscale_dnn_list(downsampled, full_dnn_method, scale = ds_scale ,verbose = True)
         cropped_restored = ut.crop_img_list(restored, x_start = x_start, height = height, y_start = y_start, width = width)
-    
+        
+        ut.save_images(restored, output_scale_string+"/R {}".format(full_dnn_method.upper()), "Restored({} x{})".format(full_dnn_method, ds_scale))
+        ut.save_images(cropped_restored, "/Cropped/"+output_scale_string+"/R {}".format(full_dnn_method.upper()), "Restored_Crop({} x{})".format(full_dnn_method, ds_scale))
         print("Restored Full")
-        print("MSE", ut.calculate_mse_list(restored, photos))
-        print("PSNR", ut.calculate_PSNR_list(restored, photos))
-        print("SSIM", ut.calculate_ssim_list(restored, photos))
+        #print("MSE", ut.calculate_mse_list(restored, photos))
+        print(np.mean(ut.calculate_mse_list(restored, photos)))
+        #print("PSNR", ut.calculate_PSNR_list(restored, photos))
+        print(np.mean(ut.calculate_PSNR_list(restored, photos)))
+        #print("SSIM", ut.calculate_ssim_list(restored, photos))
+        print(np.mean(ut.calculate_ssim_list(restored, photos)))
 
-        print("Cropped Restored")
-        print("MSE", ut.calculate_mse_list(cropped_restored, cropped))
-        print("PSNR", ut.calculate_PSNR_list(cropped_restored, cropped))
+        #print("Cropped Restored")
+        #print("MSE", ut.calculate_mse_list(cropped_restored, cropped))
+        #print("PSNR", ut.calculate_PSNR_list(cropped_restored, cropped))
         if(grid_full_dnn_cropped):
             maximize_figs.append(ut.fig_image_grid(cropped_restored, num = "Cropped Restored"))
         if(comp_full_dnn_cropped):
@@ -418,7 +474,7 @@ if(__name__ == "__main__"):
 
     # Upsample the cropped downsampled
     if(dnn_cropped):
-        restored_crop = ut.upscale_dnn_list(downsampled_crop, dnn_cropped_method, verbose = True)
+        restored_crop = ut.upscale_dnn_list(downsampled_crop, dnn_cropped_method, scale = ds_scale, verbose = True)
     
         print("Restored Crop")
         print("MSE", ut.calculate_mse_list(restored_crop, cropped))
@@ -430,19 +486,36 @@ if(__name__ == "__main__"):
 
     # Upsample with resizing
     if(resize_upsample):
-        resized_cubic = ut.scale_interpolation_list(downsampled, interpolation = cv2.INTER_CUBIC)
-        resized_lanczos = ut.scale_interpolation_list(downsampled, interpolation = cv2.INTER_LANCZOS4)
+        resized_cubic = ut.scale_interpolation_list(downsampled, scale = ds_scale, interpolation = cv2.INTER_CUBIC)
+        resized_lanczos = ut.scale_interpolation_list(downsampled, scale = ds_scale, interpolation = cv2.INTER_LANCZOS4)
+        resized_nearest = ut.scale_interpolation_list(downsampled, scale = ds_scale, interpolation = cv2.INTER_NEAREST)
+
+        ut.save_images(resized_cubic, output_scale_string + "/R BICUBIC", "Bicubic(x{})".format(ds_scale))
+        ut.save_images(resized_lanczos, output_scale_string + "/R LANCZOS", "Lanczos(x{})".format(ds_scale))
+        ut.save_images(resized_nearest, output_scale_string + "/LR NEAREST", "LR - Nearest(x{})".format(ds_scale))
 
         cropped_cubic = ut.crop_img_list(resized_cubic, x_start = x_start, height = height, y_start = y_start, width = width)
         cropped_lanczos = ut.crop_img_list(resized_lanczos, x_start = x_start, height = height, y_start = y_start, width = width)
+        cropped_nearest = ut.crop_img_list(resized_nearest, x_start = x_start, height = height, y_start = y_start, width = width)
+
+        ut.save_images(cropped_cubic, "/Cropped/"+output_scale_string+"/R BICUBIC", "Bicubic(x{})".format(ds_scale))
+        ut.save_images(cropped_lanczos, "/Cropped/"+output_scale_string+"/R LANCZOS", "Lanczos(x{})".format(ds_scale))
+        ut.save_images(cropped_nearest, "/Cropped/"+output_scale_string+"/LR NEAREST", "LR - Nearest(x{})".format(ds_scale))
+
         print("Cubic resize Full")
-        print("MSE", ut.calculate_mse_list(resized_cubic, photos))
-        print("PSNR", ut.calculate_PSNR_list(resized_cubic, photos))
-        print("SSIM", ut.calculate_ssim_list(resized_cubic, photos))
+        #print("MSE", ut.calculate_mse_list(resized_cubic, photos))
+        print(np.mean(ut.calculate_mse_list(resized_cubic, photos)))
+        #print("PSNR", ut.calculate_PSNR_list(resized_cubic, photos))
+        print(np.mean(ut.calculate_PSNR_list(resized_cubic, photos)))
+        #print("SSIM", ut.calculate_ssim_list(resized_cubic, photos))
+        print(np.mean(ut.calculate_ssim_list(resized_cubic, photos)))
         print("Lanczos resize Full")
-        print("MSE", ut.calculate_mse_list(resized_lanczos, photos))
-        print("PSNR", ut.calculate_PSNR_list(resized_lanczos, photos))
-        print("SSIM", ut.calculate_ssim_list(resized_cubic, photos))
+        #print("MSE", ut.calculate_mse_list(resized_lanczos, photos))
+        print(np.mean(ut.calculate_mse_list(resized_lanczos, photos)))
+        #print("PSNR", ut.calculate_PSNR_list(resized_lanczos, photos))
+        print(np.mean(ut.calculate_PSNR_list(resized_lanczos, photos)))
+        #print("SSIM", ut.calculate_ssim_list(resized_cubic, photos))
+        print(np.mean(ut.calculate_ssim_list(resized_cubic, photos)))
 
         if(grid_resize_crop):
             maximize_figs.append(ut.fig_image_grid(cropped_cubic, num = "Cropped - resized cubic"))
@@ -461,8 +534,17 @@ if(__name__ == "__main__"):
     # Show pyplot figures 
     for fig in maximize_figs:
         fig.canvas.manager.window.showMaximized()
-    plt.show()
 
+    print("esrgans")
+    esrgans=load_inputs(r"D:\Dropbox\others\Real-ESRGAN\results\x2",".")
+    plt.figure()
+    plt.imshow(esrgans[-1])
+    #maximize_figs.append(ut.fig_comp_grid(esrgans, photos, axis = 0, num = "esrgans"))
+    #print(np.mean(ut.calculate_mse_list(esrgans, photos)))
+    #print(np.mean(ut.calculate_PSNR_list(esrgans, photos)))
+    #print(np.mean(ut.calculate_ssim_list(esrgans, photos)))
+
+    plt.show()
 
 #ut.read_set_model("ESPCN",4)
 #fig1 = ut.fig_comp_dnn_orig(cropped[:7], axis = 0, target_ratio = 8/9)
