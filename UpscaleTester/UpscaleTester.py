@@ -17,7 +17,18 @@ from skimage import color, data, restoration
 from enum import Enum
 
 class UpscaleTester:
+    """
+    base_dir: Directory where the code is being executed
+    output_dir: an output directory inside the base directory
+    _model: cv2.dnn_superres model. the current model set for the class instance
+
+    only uses CPU
+    """
     def __init__(self, base_dir = "./"):
+        """
+        initialize with user input base_dir
+        rename the downloaded models in the /model folder so this code can recognize them
+        """
         self.base_dir = base_dir
         self.output_dir = base_dir + "output_images"
         if not os.path.isdir(self.output_dir+"/Cropped"):
@@ -60,6 +71,10 @@ class UpscaleTester:
                 os.rename(self.base_dir+"/models/"+file_name, self.base_dir+"/models/"+file_name[:-6].upper()+file_name[-6:])
         
     def _grid_dimensions(self, num_elem:int, target_ratio:float = (16/9.0)) -> (int, int):
+        """
+        num_elem: How many images do you want to display in subplot grid?
+        target_ratio: What is your target aspect ration?
+        """
         fittest_factor = 1
         fittest_score = 99999
         fittest_addition = 0
@@ -80,6 +95,11 @@ class UpscaleTester:
         return(grid_height, grid_width)
 
     def crop_img_list(self, img_list, x_start = 1/2, x_end = 3/5, y_start = 1/2, y_end = 3/5, height = None, width = None):
+        """
+        Take in a list of images and return list of images 
+        that starts from the designated part inside the image,
+        and end at certain point or after a certain pixels
+        """
         start_end = lambda img, axis, start, end: slice(int(img.shape[axis]*start), int(img.shape[axis]*end))
         start_size = lambda img, axis, start, size: slice(int(img.shape[axis]*start), int(img.shape[axis]*start) + size)
 
@@ -94,6 +114,13 @@ class UpscaleTester:
         return [img[x_crop(img), y_crop(img)] for img in img_list]
  
     def read_set_model(self, model, scale, verbose = False) -> None:
+        """
+        model: String of the name of the dnn model the user want to use for upscaling
+        scale: integer number for the model mostly x2, x3, x4 is available and LapSRN uses x8
+        
+        The corresponding model files must have been downloaded into 
+        the /models directory and renamed by initializing this class
+        """
         if verbose:
             print("> Searching in \n{0}models/ \nfor {1}_x{2}.pb model".format(self.base_dir, model.upper(), scale))
         model_path = "{0}models/{1}_x{2}.pb".format(self.base_dir, model.upper(), scale)
@@ -106,11 +133,17 @@ class UpscaleTester:
             print("> The model file \n{}\ndoesn't exist".format(model_path))
 
     def get_model_n_scale(self) -> (str, int):
+        """
+        Returns information of current model and scale
+        """
         model_name = self._model.getAlgorithm().lower()
         scale_value = self._model.getScale()
         return(model_name, scale_value)
 
     def downsample_subsample(self, img, scale, cell_x = None, cell_y = None):
+        """
+        Downsample an image by picking out exact pixels in uniform intervals
+        """
         if cell_x == None:
             cell_x = (scale + 1) // 2
         if cell_y == None:
@@ -120,6 +153,11 @@ class UpscaleTester:
         return(img[cell_x::scale, cell_y::scale, :])
 
     def downsample_neighbor_avg(self, img, scale):
+        """
+        Divide the original image into grids, each cell contating scale x scale number of pixels,
+        average each cells and use them to make x_scale downsampled image
+        Implemented with kronecker multiplication and matrix multiplication
+        """
         dim_x, dim_y, _ = img.shape
         pad_x = (-dim_x) % scale
         pad_y = (-dim_y) % scale
@@ -151,10 +189,16 @@ class UpscaleTester:
         return avg_subsampled
 
     def downsample_gaussian(self, img, scale):
+        """
+        subsample after putting gaussian filter on the image
+        """
         kernel_dim = scale + (1 - scale%2)
         return(cv2.GaussianBlur(img, (kernel_dim, kernel_dim), -1)[(scale)//2::scale, (scale)//2::scale, :])
 
     def upscale_dnn(self, img):
+        """
+        Use self.modle to upscale the image
+        """
         return self._model.upsample(img)
 
     def scale_interpolation(self, img, scale, interpolation = cv2.INTER_CUBIC):
@@ -163,9 +207,18 @@ class UpscaleTester:
         return(cv2.resize(img, dsize, fx = scale, fy = scale, interpolation = interpolation))
 
     def scale_interpolation_list(self, img_list, scale = 4, interpolation = cv2.INTER_CUBIC) -> list:
+        """
+        self.scale_interpolation() for every images in the list, returns a list of the results
+        """
         return [self.scale_interpolation(img, scale, interpolation) for img in img_list]
 
     def upscale_dnn_list(self, img_list, model:str = None, scale:int = 4, verbose:bool = False):
+        """
+        Upscale all the images in the list using dnn.
+        model can be specified or not. 
+            If not specified, it will use self.model 
+            If specified, it will be used temporarily and swapped back to the original model the class was set with
+        """
         swap_model = not model.lower() == None and not self.get_model_n_scale() == (model, scale)
         if swap_model:
             old = self.get_model_n_scale()
@@ -190,6 +243,9 @@ class UpscaleTester:
         return results
     
     def fig_image_grid(self, img_list, target_ratio = 16/9.0, num = None) -> matplotlib.figure.Figure:
+        """
+        Display images in grid format, best arrangement to fit the target aspect ratio
+        """
         num_images = len(img_list)
         grid_height, grid_width = self._grid_dimensions(num_images, target_ratio)
 
@@ -208,6 +264,8 @@ class UpscaleTester:
           
     def fig_comp_grid(self, img_list_1, img_list_2, axis = 0, target_ratio = 16/9.0, num = None) -> matplotlib.figure.Figure:
         """
+        stacks two images in each img_list. If the dimensions doesn't match, it is upscaled with INTER_NEAREST to match.
+
         The two lists' elements should match each other, and the scale difference should be consistent.
         axis = 0 : vertical concatenation
         axis = 1 : horizontal concatenation
@@ -227,6 +285,9 @@ class UpscaleTester:
         return self.fig_image_grid(comp, target_ratio, num)
 
     def fig_comp_dnn_orig(self, img_list, axis = 1, target_ratio = 16/9.0, model:str = None, scale:int = 4, verbose = False, num = None):
+        """
+        compares dnn upscaled image with the original image
+        """
         upscaled = self.upscale_dnn_list(img_list, model, scale, verbose)
         return self.fig_comp_grid(img_list, upscaled, axis, target_ratio, num)
 
@@ -236,6 +297,9 @@ class UpscaleTester:
             plt.imshow(imgs[:,:,::-1])
 
     def calculate_mse(self, img1, img2, crop_or_resize = False, best = True):
+        """
+        take to images, that might have slightly disagreeing dimensions and calculate mse
+        """
         imgs = [img1, img2]
         dims = (img1.shape[:2], img2.shape[:2])
         bigger = 0 if dims[0][0]>dims[1][0] else 1
