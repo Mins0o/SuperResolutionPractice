@@ -363,5 +363,7 @@ MigrationBackup/
 FodyWeavers.xsd
 *.pb
 /Sandbox
-/UpscaleTester/output_images
+/UpscaleTester/output_images/*
+!/UpscaleTester/output_images/x2/
+!/UpscaleTester/output_images/x4/
 /UpscaleTester/datasets
