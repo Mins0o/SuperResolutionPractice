@@ -1,3 +1,4 @@
+# [Requirements](#conda-environments)
 # Super Resolution Practice  
 In this project, I learned basics of image super resolutions and investigated the current trend of the technology. This research project was oriented in self-education rather than expanding the frontier.  
 
@@ -154,6 +155,7 @@ Also, by going through various state-of-the-art paper at their own time and hist
 ," 2021. [Online] Available: [http://vclab.kaist.ac.kr/cs484/index.html](http://vclab.kaist.ac.kr/cs484/index.html). [Accessed 08 20212]
 
 ___
+### Conda Environments  
 To use anaconda for environment, use the commands in [CONDA ENVIRONMENT CMDS](./CONDA%20ENVIRONMENT%20CMDS.txt)  
 For using this repository, use the [[ThisRepo]environment.yml](./[ThisRepo]environment.yml) (env name: SR)  
 For [[realESRGAN]](https://github.com/xinntao/Real-ESRGAN), use the [[Real ESRGAN]environment.yml](./[Real%20ESRGAN]environment.yml) (env name: rESRGAN)  
