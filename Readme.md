@@ -26,11 +26,11 @@ There are several different ways this problem was approached, but unlike the mod
 
 Based on image observation theory, low resolution images were products of distortion matrices and the higher resolution counter part of the image. For better understanding, from the equation below:  
 
-![Equation 1](./figures/eq1.png "Equation 1")  
+![Equation 1](./figures/Eq1.png "Equation 1")  
 
 By solving or optimizing the following equation, higher resolution could be achieved.  
 
-![Equation 2](./figures/eq2.png)  
+![Equation 2](./figures/Eq2.png)  
 
 There are also frequency domain approach, statistical approach, and example-based approach.  
 With the rise of neural networks, more researchers are leaning toward the example-based approach.  
